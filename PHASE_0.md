@@ -674,13 +674,13 @@ npm run start
 - [x] /modules/dashboard/api/router.ts getResumePoint.query returns {url, phase, metadata} or null
 
 **Prompt 4.2: History & Resume Deep**
-- [ ] HistoryList component: list of completed subtopics
-- [ ] Shows: score, completion date, time spent, status badge
-- [ ] Read-only, no retest button
-- [ ] Resume logic: phase='content' -> content with position
-- [ ] Resume logic: phase='checkpoint' -> checkpoint fresh (no answers)
-- [ ] Resume logic: phase='results' -> results screen
-- [ ] /modules/dashboard/api/router.ts getHistory.query returns ATTEMPT joined with SUBTOPIC
+- [x] HistoryList component: list of completed subtopics
+- [x] Shows: score, completion date, time spent, status badge
+- [x] Read-only, no retest button
+- [x] Resume logic: phase='content' -> content with position
+- [x] Resume logic: phase='checkpoint' -> checkpoint fresh (no answers)
+- [x] Resume logic: phase='results' -> results screen
+- [x] /modules/dashboard/api/router.ts getHistory.query returns ATTEMPT joined with SUBTOPIC
 
 **Prompt 5.1: Testing & Error Resilience**
 - [ ] Playwright test: exit and resume content (scroll, exit, return, position restored)

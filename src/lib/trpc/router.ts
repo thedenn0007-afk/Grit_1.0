@@ -131,6 +131,56 @@ export const appRouter = t.router({
       };
     }),
 
+    /**
+     * Get learning history
+     * 
+     * Returns ATTEMPT records joined with SUBTOPIC and TOPIC.
+     * Shows completed subtopics with score, completion date, time spent.
+     * Read-only - no retest functionality.
+     */
+    getHistory: t.procedure.query(async ({ ctx }) => {
+      const userId = getUserIdFromSession(ctx);
+
+      // If no user, return empty history
+      if (!userId) {
+        return [];
+      }
+
+      // Fetch attempts with subtopic and topic information
+      const attempts = await ctx.prisma.attempt.findMany({
+        where: {
+          userId: userId,
+        },
+        include: {
+          subtopic: {
+            include: {
+              topic: {
+                select: {
+                  title: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      // Transform to history items
+      const historyItems = attempts.map((attempt) => ({
+        attemptId: attempt.id,
+        subtopicId: attempt.subtopicId,
+        subtopicTitle: attempt.subtopic.title,
+        topicTitle: attempt.subtopic.topic?.title ?? "Unknown Topic",
+        totalScore: attempt.totalScore,
+        timeSpentSeconds: attempt.timeSpentSeconds,
+        completedAt: attempt.createdAt,
+      }));
+
+      return historyItems;
+    }),
+
     startTopic: t.procedure
       .input(z.object({ topicId: z.string() }))
       .mutation(async ({ input, ctx }) => {
@@ -152,6 +202,22 @@ export const appRouter = t.router({
         });
 
         return { success: true, firstSubtopicId: firstSubtopic.id };
+      }),
+
+    /**
+     * Get first subtopic of a topic
+     * Used when navigating to content with topicId
+     */
+    getFirstSubtopic: t.procedure
+      .input(z.object({ topicId: z.string() }))
+      .query(async ({ input, ctx }) => {
+        const firstSubtopic = await ctx.prisma.subtopic.findFirst({
+          where: { topicId: input.topicId },
+          orderBy: { id: "asc" },
+          select: { id: true, title: true },
+        });
+
+        return firstSubtopic;
       }),
   }),
 

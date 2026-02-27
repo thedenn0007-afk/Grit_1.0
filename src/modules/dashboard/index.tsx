@@ -14,6 +14,7 @@
 import React from "react";
 import TopicGrid from "./components/TopicGrid";
 import ResumeBanner from "./components/ResumeBanner";
+import HistoryList from "./components/HistoryList";
 
 export default function DashboardModule(): JSX.Element {
   return (
@@ -32,6 +33,11 @@ export default function DashboardModule(): JSX.Element {
         <div>
           <h2 className="text-xl font-semibold text-slate-800 mb-6">Available Topics</h2>
           <TopicGrid />
+        </div>
+
+        {/* Learning History - Completed subtopics */}
+        <div className="mt-12">
+          <HistoryList />
         </div>
 
         {/* Linear Progression Notice */}
