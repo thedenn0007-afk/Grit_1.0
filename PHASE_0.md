@@ -683,16 +683,16 @@ npm run start
 - [x] /modules/dashboard/api/router.ts getHistory.query returns ATTEMPT joined with SUBTOPIC
 
 **Prompt 5.1: Testing & Error Resilience**
-- [ ] Playwright test: exit and resume content (scroll, exit, return, position restored)
-- [ ] Playwright test: complete checkpoint (answer all, submit, score shown)
-- [ ] Playwright test: fail and retry (score <70, retry button works)
-- [ ] Playwright test: pass and progress (score >=70, next unlocked)
-- [ ] Playwright test: linear enforcement (try skip locked, blocked)
-- [ ] Global error boundary in layout.tsx
-- [ ] Module error boundaries in each /modules/[name]/layout.tsx
-- [ ] Sentry logging in error boundaries
-- [ ] Offline detection banner when navigator.onLine=false
-- [ ] Queue saves when offline
+- [x] Playwright test: exit and resume content (scroll, exit, return, position restored)
+- [x] Playwright test: complete checkpoint (answer all, submit, score shown)
+- [x] Playwright test: fail and retry (score <70, retry button works)
+- [x] Playwright test: pass and progress (score >=70, next unlocked)
+- [x] Playwright test: linear enforcement (try skip locked, blocked)
+- [x] Global error boundary in layout.tsx
+- [x] Module error boundaries in each /modules/[name]/layout.tsx
+- [x] Sentry logging in error boundaries
+- [x] Offline detection banner when navigator.onLine=false
+- [x] Queue saves when offline
 
 **Prompt 5.2: Performance & Deploy**
 - [ ] React Query staleTime 5min for content
