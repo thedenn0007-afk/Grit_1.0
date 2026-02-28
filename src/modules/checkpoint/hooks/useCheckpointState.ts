@@ -5,7 +5,9 @@
  * Answers stored in React state only - no localStorage, no API calls until submit.
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+
+
 import type { MCQuestion, ShortAnswerQuestion } from "../../../lib/question-generator/engine";
 
 /**
@@ -94,16 +96,20 @@ export function useCheckpointState(
     status: questions.length > 0 ? "question" : "loading",
   });
 
-  // Update questions when they change
-  useState(() => {
-    if (questions.length > 0 && state.status === "loading") {
+  // Track whether we have already initialized questions into state
+  const initializedRef = useRef<boolean>(questions.length > 0);
+
+  // When questions arrive asynchronously (after mount), transition out of 'loading'
+  useEffect(() => {
+    if (questions.length > 0 && !initializedRef.current) {
+      initializedRef.current = true;
       setState((prev) => ({
         ...prev,
         questions,
         status: "question",
       }));
     }
-  });
+  }, [questions]);
 
   const totalQuestions = state.questions.length;
 
@@ -114,7 +120,9 @@ export function useCheckpointState(
 
   const currentAnswer = useMemo((): CheckpointAnswer | null => {
     if (!currentQuestion) return null;
-    return state.answers.get(currentQuestion.id) || null;
+    // Use ?? null not || null — answer index 0 is falsy but valid
+    const ans = state.answers.get(currentQuestion.id);
+    return ans !== undefined ? ans : null;
   }, [state.answers, currentQuestion]);
 
   const answeredCount = useMemo((): number => {
@@ -144,12 +152,12 @@ export function useCheckpointState(
         return {
           ...prev,
           answers: newAnswers,
-          // Check if all questions are answered for auto-submit state
-          status: newAnswers.size === totalQuestions ? "submit" : prev.status,
+          // Keep status as "question" — UI decides when to show Submit
+          status: prev.status === "complete" ? "complete" : "question",
         };
       });
     },
-    [currentQuestion, totalQuestions]
+    [currentQuestion]
   );
 
   const nextQuestion = useCallback((): void => {
@@ -282,23 +290,23 @@ export function validateAnswer(
   if (question.type === "shortAnswer") {
     // Semantic matching: check if any keyword from acceptable answers is present
     const userAnswerLower = String(answer).toLowerCase().trim();
-    
+
     for (const acceptable of question.acceptableAnswers) {
       const acceptableAnswerLower = acceptable.toLowerCase();
-      
+
       // Split into words and check for keyword presence
       const keywords = acceptableAnswerLower.split(/\s+/).filter((word) => word.length > 3);
-      
+
       const matchedKeywords = keywords.filter((keyword) =>
         userAnswerLower.includes(keyword)
       );
-      
+
       // Consider correct if at least 50% of keywords match
       if (keywords.length > 0 && matchedKeywords.length >= Math.ceil(keywords.length * 0.5)) {
         return true;
       }
     }
-    
+
     // Also check for exact or near-match against first acceptable answer
     if (userAnswerLower.length > 0 && question.acceptableAnswers.length > 0) {
       const firstAcceptableLower = question.acceptableAnswers[0].toLowerCase();

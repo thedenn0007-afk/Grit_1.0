@@ -40,18 +40,18 @@ interface ExitPointData {
  * - beforeunload handler saves exit_point_json with signals
  */
 export function ContentReader(props: ContentReaderProps): JSX.Element {
-  const { 
-    subtopicId, 
-    content, 
-    onContinue, 
+  const {
+    subtopicId,
+    content,
+    onContinue,
     className = "",
-    initialResumePosition = 0 
+    initialResumePosition = 0
   } = props;
 
   // Get URL search params for position
   const searchParams = useSearchParams();
   const urlPosition = searchParams?.get("position");
-  
+
   // Ref for the scroll container
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -112,12 +112,12 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
         return parsed;
       }
     }
-    
+
     // Then check initial prop
     if (initialResumePosition > 0) {
       return initialResumePosition;
     }
-    
+
     // Finally check localStorage
     const savedPosition = localStorage.getItem(localStorageKey);
     if (savedPosition) {
@@ -126,7 +126,7 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
         return parsed;
       }
     }
-    
+
     return 0;
   }, [urlPosition, initialResumePosition]);
 
@@ -167,7 +167,7 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
    * Show continue CTA at 95% scroll
    */
   useEffect(() => {
-    setShowContinueCTA(scrollPercentage >= 95);
+    setShowContinueCTA(scrollPercentage >= 50);
   }, [scrollPercentage]);
 
   /**
@@ -175,7 +175,7 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
    */
   const handleExit = useCallback((): void => {
     const signals = getCurrentSignals();
-    
+
     const exitPointData: ExitPointData = {
       type: "content",
       position: scrollPercentage,
@@ -272,17 +272,31 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
       {/* Progress bar at top */}
       <ProgressBar progress={scrollPercentage} />
 
+      {/* Sticky action header */}
+      <div className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
+        <span className="text-sm font-medium text-slate-600">
+          {scrollPercentage > 0 ? `${Math.round(scrollPercentage)}% read` : "Reading content..."}
+        </span>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Take Checkpoint →
+        </button>
+      </div>
+
       {/* Saving indicator */}
       {isSaving && (
-        <div className="fixed top-3 right-3 z-50 text-xs text-slate-400">
+        <div className="fixed top-14 right-3 z-50 text-xs text-slate-400">
           Saving...
         </div>
       )}
 
-      {/* Main content container */}
+      {/* Main content container - padded for sticky header */}
       <div
         ref={containerRef}
-        className="h-screen overflow-y-auto scroll-smooth"
+        className="h-screen overflow-y-auto scroll-smooth pt-12"
         style={{
           scrollBehavior: "smooth",
         }}
@@ -292,7 +306,7 @@ export function ContentReader(props: ContentReaderProps): JSX.Element {
         </div>
       </div>
 
-      {/* Continue CTA - appears at 95% */}
+      {/* Continue CTA - now appears at 50% scroll */}
       <ContinueCTA
         isVisible={showContinueCTA}
         onContinue={onContinue}

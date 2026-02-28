@@ -539,6 +539,7 @@ By end of Week 4, Phase 1 is complete when:
 - ✅ Bundle <200kb, performance optimized
 - ✅ Deployed to Vercel at public URL
 - ✅ 3 topics seeded, all features locked working
+- ⚠️ **Known Issue**: Result accuracy validation (what the user answered vs what the correct result is) needs refinement.
 
 ---
 

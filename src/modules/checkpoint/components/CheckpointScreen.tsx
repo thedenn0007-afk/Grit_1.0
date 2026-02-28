@@ -1,21 +1,20 @@
 /**
  * CheckpointScreen Component
- * 
+ *
  * Main checkpoint screen with state machine:
- * loading -> question -> validating -> next -> submit -> complete
- * 
+ * loading -> question -> complete
+ *
  * Features:
  * - Fetches questions via tRPC
- * - State machine for question flow
+ * - MCQ: select answer → Next/Submit enabled immediately
+ * - ShortAnswer: check answer → show result → Next/Submit enabled
  * - Exit handler with confirmation dialog
- * - Answer state stored in React state only
- * - No localStorage, no partial persistence
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { trpc } from "../../../lib/trpc/client";
 import { QuestionCard } from "./QuestionCard";
-import { useCheckpointState, validateAnswer, type CheckpointQuestion, type CheckpointAnswer } from "../hooks/useCheckpointState";
+import { useCheckpointState, validateAnswer, type CheckpointQuestion } from "../hooks/useCheckpointState";
 import { useToast } from "../../../components/ui/Toast";
 import { useRouter } from "next/navigation";
 import Loading from "../../../components/ui/Loading";
@@ -49,8 +48,9 @@ export function CheckpointScreen({
   onExit,
   onComplete,
 }: CheckpointScreenProps): JSX.Element {
-  // State for exit confirmation dialog
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [networkError, setNetworkError] = useState<boolean>(false);
 
   // Fetch questions using tRPC
   const {
@@ -71,14 +71,13 @@ export function CheckpointScreen({
     return Array.from(questionSet.questions);
   }, [questionSet]);
 
-  // Use checkpoint state hook
+  // Checkpoint state machine
   const {
     state: checkpointState,
     currentQuestion,
     currentAnswer,
     totalQuestions,
     answeredCount,
-    canGoNext,
     canGoPrevious,
     isLastQuestion,
     selectAnswer,
@@ -88,59 +87,26 @@ export function CheckpointScreen({
     setComplete,
     resetCheckpoint,
   } = useCheckpointState(questions);
-  // include resetCheckpoint to allow discarding answers on exit
-  // (hook values pulled from a single call above)
 
-  // Mutation to persist exit point data when user exits checkpoint
   const saveProgressMutation = trpc.progress.save.useMutation();
-
-  // Track short answer attempts
-  const [shortAnswerAttempts, setShortAnswerAttempts] = useState<Map<string, number>>(new Map());
+  const submitCheckpointMutation = trpc.submitCheckpoint.useMutation();
   const toast = useToast();
   const router = useRouter();
-  const [submitting, setSubmitting] = useState<boolean>(false);
-  const [networkError, setNetworkError] = useState<boolean>(false);
 
-  // Calculate current question's attempts remaining
-  const currentAttemptsRemaining = useMemo((): number => {
-    if (!currentQuestion || currentQuestion.type !== "shortAnswer") {
-      return 3;
-    }
-    const attempts = shortAnswerAttempts.get(currentQuestion.id) || 0;
-    return Math.max(0, 3 - attempts);
-  }, [currentQuestion, shortAnswerAttempts]);
-
-  // Handle exit with confirmation
+  // ---------- Exit handlers ----------
   const handleExitClick = useCallback((): void => {
     setShowExitConfirm(true);
   }, []);
 
   const handleExitConfirm = useCallback((): void => {
-    // Create exit point data
-    const exitPointData: ExitPointData = {
-      type: "checkpoint",
-      timestamp: Date.now(),
-    };
-
-    // Persist exit point via progress save mutation (best-effort)
+    const timestamp = Date.now();
     (async () => {
       try {
-        await saveProgressMutation.mutateAsync({
-          subtopicId,
-          position: 0,
-          timestamp: exitPointData.timestamp,
-        });
+        await saveProgressMutation.mutateAsync({ subtopicId, position: 0, timestamp });
       } catch (e) {
-        // Log failure but continue to discard answers
-        // eslint-disable-next-line no-console
         console.error("Failed to save exit point:", e);
       }
-
-      // Reset checkpoint answers in memory and call onExit
-      try {
-        resetCheckpoint();
-      } catch {}
-
+      try { resetCheckpoint(); } catch { }
       onExit();
     })();
   }, [onExit, resetCheckpoint, subtopicId]);
@@ -149,82 +115,56 @@ export function CheckpointScreen({
     setShowExitConfirm(false);
   }, []);
 
-  // Handle short answer submission
-  const handleShortAnswerSubmit = useCallback(
-    (questionId: string, answer: string): void => {
-      const question = questions.find((q) => q.id === questionId);
-      if (!question || question.type !== "shortAnswer") return;
-
-      // Check if answer is correct
-      const isCorrect = validateAnswer(question, answer);
-
-      // Update attempts
-      const currentAttempts = shortAnswerAttempts.get(questionId) || 0;
-      const newAttempts = new Map(shortAnswerAttempts);
-      newAttempts.set(questionId, currentAttempts + 1);
-      setShortAnswerAttempts(newAttempts);
-
-      // Store the answer
-      selectAnswer(answer);
-
-      // If correct or max attempts reached, move to next
-      if (isCorrect || currentAttempts + 1 >= 3) {
-        // Brief delay before next question
-        setTimeout(() => {
-          if (!isLastQuestion) {
-            nextQuestion();
-          }
-        }, 1000);
-      }
-    },
-    [questions, selectAnswer, shortAnswerAttempts, isLastQuestion, nextQuestion]
-  );
-
-  // Handle checkpoint submission
+  // ---------- Submit ----------
   const handleSubmitCheckpoint = useCallback((): void => {
-    // Trigger submission mutation which persists attempt atomically on the server
     (async () => {
       const result = submitCheckpoint();
 
-      // Prepare payload
       const payload = {
         subtopicId,
-        answers: result.answers.map((a) => ({ questionId: a.questionId, selectedAnswer: a.selectedAnswer })),
+        complexityScore,
+        adaptationModifier,
+        answers: result.answers.map((a) => {
+          // Find the question to compute correctness client-side
+          const question = questions.find((q) => q.id === a.questionId);
+          const isCorrect = question ? validateAnswer(question, a.selectedAnswer) : false;
+          return {
+            questionId: a.questionId,
+            selectedAnswer: a.selectedAnswer,
+            isCorrect,
+          };
+        }),
         timeSpentSeconds: 0,
       };
 
       try {
         setSubmitting(true);
-        // Use type assertion to work around tRPC typing issue
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mutation: any = trpc.submitCheckpoint;
-        const res: any = await mutation.mutateAsync(payload);
+        const res = await submitCheckpointMutation.mutateAsync(payload);
 
-        // Mark complete locally and navigate to results
-        setComplete(res.score);
-        onComplete(res.score, res.canProgress);
-        router.push(`/subtopic/${subtopicId}/results?attemptId=${res.attemptId}`);
+        setComplete(res.totalScore);
+        onComplete(res.totalScore, res.canProgress);
+        router.push(`/modules/results?attemptId=${res.attemptId}`);
       } catch (e: any) {
-        // Network error (e.g., failed to fetch) - show retry dialog
-        const isNetwork = e?.message && String(e.message).toLowerCase().includes("fetch") || e?.name === "TypeError";
+        const isNetwork =
+          (e?.message && String(e.message).toLowerCase().includes("fetch")) ||
+          e?.name === "TypeError";
         if (isNetwork) {
           setNetworkError(true);
         } else {
-          // Server error - show toast and keep answers in memory
           toast.error("Submission failed", e?.message || "Server error during submission");
         }
       } finally {
         setSubmitting(false);
       }
     })();
-  }, [submitCheckpoint, questions, setComplete, onComplete]);
+  }, [submitCheckpoint, submitCheckpointMutation, subtopicId, complexityScore, adaptationModifier, setComplete, onComplete, questions, router]);
 
   const handleRetrySubmit = useCallback((): void => {
     setNetworkError(false);
     handleSubmitCheckpoint();
   }, [handleSubmitCheckpoint]);
 
-  // Render loading state
+  // ---------- Loading / Error / Empty states ----------
   if (isLoadingQuestions) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -233,7 +173,6 @@ export function CheckpointScreen({
     );
   }
 
-  // Render error state
   if (questionsError) {
     return (
       <div className="p-6">
@@ -254,7 +193,6 @@ export function CheckpointScreen({
     );
   }
 
-  // Render empty state
   if (questions.length === 0) {
     return (
       <div className="p-6">
@@ -275,10 +213,11 @@ export function CheckpointScreen({
     );
   }
 
-  // Render question state
-  if (checkpointState.status === "question" || checkpointState.status === "submit") {
-    const progressPercentage = Math.round((answeredCount / totalQuestions) * 100);
+  const allAnswered = answeredCount === totalQuestions;
+  const progressPercentage = Math.round((answeredCount / totalQuestions) * 100);
 
+  // ---------- Main quiz render ----------
+  if (checkpointState.status === "question" || checkpointState.status === "submit") {
     return (
       <div className="max-w-2xl mx-auto p-6">
         {/* Header */}
@@ -316,18 +255,13 @@ export function CheckpointScreen({
           <QuestionCard
             question={currentQuestion}
             answer={currentAnswer}
-            onAnswerChange={
-              currentQuestion.type === "shortAnswer"
-                ? (answer) => handleShortAnswerSubmit(currentQuestion.id, String(answer))
-                : selectAnswer
-            }
+            onAnswerChange={selectAnswer}
             validationState="idle"
-            attemptsRemaining={currentQuestion.type === "shortAnswer" ? currentAttemptsRemaining : 3}
-            disabled={checkpointState.status === "submit"}
+            disabled={false}
           />
         )}
 
-        {/* Navigation Buttons */}
+        {/* Navigation */}
         <div className="flex items-center justify-between mt-8">
           <button
             type="button"
@@ -338,33 +272,33 @@ export function CheckpointScreen({
             Previous
           </button>
 
-          {checkpointState.status === "submit" || answeredCount === totalQuestions ? (
-            <button
-              type="button"
-              onClick={handleSubmitCheckpoint}
-              disabled={answeredCount !== totalQuestions || submitting}
-              className={`px-6 py-2 rounded-lg transition-colors font-medium ${
-                answeredCount !== totalQuestions || submitting
+          {isLastQuestion ? (
+            allAnswered ? (
+              <button
+                type="button"
+                onClick={handleSubmitCheckpoint}
+                disabled={submitting}
+                className={`px-6 py-2 rounded-lg font-medium transition-colors ${submitting
                   ? "bg-slate-300 text-slate-600 cursor-not-allowed"
                   : "bg-green-600 text-white hover:bg-green-700"
-              }`}
-            >
-              {submitting ? "Submitting..." : "Submit Checkpoint"}
-            </button>
-          ) : isLastQuestion ? (
-            <button
-              type="button"
-              onClick={nextQuestion}
-              disabled={!currentAnswer}
-              className="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Finish
-            </button>
+                  }`}
+              >
+                {submitting ? "Submitting..." : "Submit Checkpoint"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="px-6 py-2 rounded-lg bg-slate-300 text-slate-600 cursor-not-allowed font-medium"
+              >
+                Answer to Submit
+              </button>
+            )
           ) : (
             <button
               type="button"
               onClick={nextQuestion}
-              disabled={!currentAnswer}
+              disabled={currentAnswer === null}
               className="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Next
@@ -372,33 +306,21 @@ export function CheckpointScreen({
           )}
         </div>
 
-        {/* Question Dots Indicator */}
+        {/* Question Dots */}
         <div className="flex items-center justify-center gap-2 mt-6">
           {questions.map((_, index) => {
             const isAnswered = checkpointState.answers.has(questions[index].id);
             const isCurrent = index === checkpointState.currentIndex;
-
             return (
-              <button
+              <div
                 key={`dot-${index}`}
-                type="button"
-                onClick={() => {
-                  // Navigate to this question
-                  const state = checkpointState;
-                  if (index < state.currentIndex || index === state.currentIndex) {
-                    // For previous questions, we can't go back easily without implementing goToQuestion
-                    // This is a simplified version
-                  }
-                }}
-                disabled={index > checkpointState.currentIndex}
-                className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                  isCurrent
-                    ? "bg-blue-500"
-                    : isAnswered
+                className={`w-2.5 h-2.5 rounded-full transition-colors ${isCurrent
+                  ? "bg-blue-500"
+                  : isAnswered
                     ? "bg-green-500"
                     : "bg-slate-300"
-                } ${index <= checkpointState.currentIndex ? "cursor-pointer" : "cursor-not-allowed"}`}
-                aria-label={`Go to question ${index + 1}`}
+                  }`}
+                aria-label={`Question ${index + 1}`}
               />
             );
           })}
@@ -408,9 +330,7 @@ export function CheckpointScreen({
         {showExitConfirm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
-              <h3 className="text-lg font-semibold text-slate-800">
-                Exit Checkpoint?
-              </h3>
+              <h3 className="text-lg font-semibold text-slate-800">Exit Checkpoint?</h3>
               <p className="text-slate-600 mt-2">
                 Your progress will be lost. Are you sure you want to exit?
               </p>
@@ -433,12 +353,15 @@ export function CheckpointScreen({
             </div>
           </div>
         )}
-        {/* Network error (retry) dialog */}
+
+        {/* Network Error Retry Dialog */}
         {networkError && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
               <h3 className="text-lg font-semibold text-slate-800">Network Error</h3>
-              <p className="text-slate-600 mt-2">We couldn't reach the server. Your answers are safe. Retry?</p>
+              <p className="text-slate-600 mt-2">
+                We couldn&apos;t reach the server. Your answers are safe. Retry?
+              </p>
               <div className="flex gap-3 mt-6">
                 <button
                   type="button"
@@ -462,7 +385,7 @@ export function CheckpointScreen({
     );
   }
 
-  // Render loading/validating states
+  // Fallback spinner for loading/validating states
   return (
     <div className="flex items-center justify-center min-h-[400px]">
       <Loading />

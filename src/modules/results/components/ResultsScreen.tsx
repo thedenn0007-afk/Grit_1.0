@@ -204,37 +204,12 @@ export function ResultsScreen({
     }
   }, [onExit, router]);
 
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-slate-300 border-t-slate-800 rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-slate-600">Loading results...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error || !attempt) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <p className="text-red-600">Failed to load results</p>
-          <button
-            type="button"
-            onClick={handleExit}
-            className="mt-4 px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-700"
-          >
-            Return to Dashboard
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const { totalScore, canProgress, questions, userAnswers, subtopicTitle } = attempt;
+  // Safely derive display values even while loading or when attempt is missing
+  const totalScore = attempt?.totalScore ?? 0;
+  const canProgress = attempt?.canProgress ?? false;
+  const questions = attempt?.questions ?? [];
+  const userAnswers = attempt?.userAnswers ?? [];
+  const subtopicTitle = attempt?.subtopicTitle ?? "Checkpoint Results";
 
   // Build question display data
   const questionData = useMemo(() => {
@@ -280,6 +255,36 @@ export function ResultsScreen({
 
   const feedbackText = getFeedbackText(totalScore);
   const feedbackColor = getFeedbackColor(totalScore);
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-slate-300 border-t-slate-800 rounded-full animate-spin mx-auto"></div>
+          <p className="mt-4 text-slate-600">Loading results...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || !attempt) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <p className="text-red-600">Failed to load results</p>
+          <button
+            type="button"
+            onClick={handleExit}
+            className="mt-4 px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-700"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">

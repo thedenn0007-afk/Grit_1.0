@@ -6,34 +6,102 @@ import { ContentReader } from "./components/ContentReader";
 import { trpc } from "../../lib/trpc/client";
 
 /**
+ * Builds a rich markdown reading article from the parsed contentJson structure.
+ * DB stores: { title, description, learningObjectives, questions, deepDivePlaceholder }
+ */
+function buildRichContent(parsed: Record<string, unknown>, fallbackTitle: string): string {
+  const title = String(parsed.title || fallbackTitle);
+  const description = String(parsed.description || "");
+  const objectives: string[] = Array.isArray(parsed.learningObjectives)
+    ? (parsed.learningObjectives as string[])
+    : [];
+  const topics: Array<Record<string, unknown>> = Array.isArray(parsed.topics)
+    ? (parsed.topics as Array<Record<string, unknown>>)
+    : [];
+
+  const parts: string[] = [];
+
+  // Title
+  parts.push(`# ${title}\n`);
+
+  // Description paragraph
+  if (description) {
+    parts.push(`${description}\n`);
+  }
+
+  // Learning objectives box
+  if (objectives.length > 0) {
+    parts.push(`\n## What You'll Learn\n`);
+    objectives.forEach((obj) => {
+      parts.push(`- ${obj}`);
+    });
+    parts.push("");
+  }
+
+  // Topic sections (if present in richer data)
+  if (topics.length > 0) {
+    topics.forEach((topic, i) => {
+      const topicTitle = String(topic.title || `Section ${i + 1}`);
+      const topicDesc = String(topic.description || topic.content || "");
+      const points: string[] = Array.isArray(topic.keyPoints)
+        ? (topic.keyPoints as string[])
+        : [];
+
+      parts.push(`\n## ${topicTitle}\n`);
+      if (topicDesc) parts.push(`${topicDesc}\n`);
+      if (points.length > 0) {
+        points.forEach((pt) => parts.push(`- ${pt}`));
+        parts.push("");
+      }
+    });
+  } else if (objectives.length > 0) {
+    // Expand each learning objective into a readable section
+    parts.push(`\n## Reading Material\n`);
+    objectives.forEach((obj, i) => {
+      parts.push(`\n### ${i + 1}. ${obj}\n`);
+      parts.push(
+        `This section covers how to **${obj.toLowerCase()}**. ` +
+        `Understanding this concept is fundamental to mastering ${title}. ` +
+        `Take a moment to think about what you already know and how this fits into the bigger picture of the topic. ` +
+        `As you progress through the checkpoint questions, you'll apply this knowledge to real-world scenarios.\n`
+      );
+    });
+  }
+
+  // What to expect in checkpoint
+  parts.push(`\n---\n`);
+  parts.push(
+    `> **Ready to test your knowledge?** Once you've read through this material, ` +
+    `click **Take Checkpoint →** above to begin the quiz.\n`
+  );
+
+  return parts.join("\n");
+}
+
+
+/**
  * Default content when no subtopicId provided
  */
 const DEFAULT_CONTENT = {
   title: "Welcome to Grit Flow",
-  content: `
-    <h1>Welcome to Grit Flow</h1>
-    <p>Select a topic from the dashboard to begin learning.</p>
-  `,
+  content: `# Welcome to Grit Flow\n\nSelect a topic from the dashboard to begin learning.\n`,
 };
 
 /**
  * Content Module Page
- * Fetches content from the database using tRPC
- * Supports both subtopicId and topicId (resolves to first subtopic)
+ * Fetches content from the database using tRPC and displays it as rich reading material.
  */
 export default function ContentModule(): JSX.Element {
   const searchParams = useSearchParams();
   const router = useRouter();
-  
-  // Get subtopicId first (preferred), then topicId as fallback
+
   const topicId = searchParams?.get("topicId") || "";
   const initialSubtopicId = searchParams?.get("subtopicId") || "";
-  
-  // State to hold resolved subtopicId
-  const [resolvedSubtopicId, setResolvedSubtopicId] = useState(initialSubtopicId);
 
-  // If topicId is provided but no subtopicId, resolve it to first subtopic
-  const { data: firstSubtopic, isLoading: isResolvingTopic } = trpc.dashboard.getFirstSubtopic.useQuery(
+  const [resolvedSubtopicId, setResolvedSubtopicId] = useState(initialSubtopicId);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+
+  const { data: firstSubtopic, isInitialLoading: isResolvingTopic } = trpc.dashboard.getFirstSubtopic.useQuery(
     { topicId },
     {
       enabled: !!topicId && !initialSubtopicId,
@@ -41,21 +109,17 @@ export default function ContentModule(): JSX.Element {
     }
   );
 
-  // When we get the first subtopic, update the state
   useEffect(() => {
     if (firstSubtopic && firstSubtopic.id) {
       setResolvedSubtopicId(firstSubtopic.id);
     } else if (topicId && !initialSubtopicId && !isResolvingTopic) {
-      // If no subtopic found for topic, redirect to dashboard
       router.replace(`/modules/dashboard`);
     }
   }, [firstSubtopic, topicId, initialSubtopicId, isResolvingTopic, router]);
 
-  // Use resolved or direct subtopicId
   const subtopicId = resolvedSubtopicId || initialSubtopicId;
 
-  // Fetch content from database using tRPC
-  const { data: contentData, isLoading, error } = trpc.content.getContent.useQuery(
+  const { data: contentData, isInitialLoading: isLoading, error } = trpc.content.getContent.useQuery(
     { subtopicId },
     {
       enabled: !!subtopicId,
@@ -63,23 +127,42 @@ export default function ContentModule(): JSX.Element {
     }
   );
 
+  // Timeout fallback: if loading for >8s, show "Try again" so user isn't stuck
+  useEffect(() => {
+    if (!isLoading && !isResolvingTopic) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadingTimedOut(true), 8000);
+    return () => clearTimeout(timer);
+  }, [isLoading, isResolvingTopic]);
+
   const handleContinue = useCallback((): void => {
     if (subtopicId) {
-      // Navigate to checkpoint for this subtopic
       window.location.href = `/modules/checkpoint?subtopicId=${subtopicId}`;
     }
   }, [subtopicId]);
 
-  // Loading state - show while resolving topic or loading content
   if (isLoading || isResolvingTopic) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
+      <div className="h-screen flex flex-col items-center justify-center gap-4 bg-gray-50">
         <div className="text-gray-600">Loading content...</div>
+        {loadingTimedOut && (
+          <div className="text-center">
+            <p className="text-sm text-amber-600 mb-2">Taking longer than usual?</p>
+            <button
+              type="button"
+              onClick={() => router.push("/modules/dashboard")}
+              className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 text-sm font-medium"
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        )}
       </div>
     );
   }
 
-  // Error state or no subtopicId - show default welcome content
   if (error || !contentData) {
     return (
       <div className="h-screen overflow-hidden">
@@ -93,29 +176,21 @@ export default function ContentModule(): JSX.Element {
     );
   }
 
-  // Parse the content JSON from database
-  let parsedContent = DEFAULT_CONTENT;
+  // Build rich reading content from the DB JSON
+  let richContent = DEFAULT_CONTENT.content;
   try {
-    const parsed = JSON.parse(contentData.content);
-    // Use the actual learning content
-    // The content structure has description and learningObjectives, not just content field
-    parsedContent = {
-      title: parsed.title || "Content",
-      content: parsed.description || parsed.content || `<h1>${parsed.title}</h1><p>${parsed.description || "No content available"}</p>`,
-    };
+    const parsed = JSON.parse(contentData.content) as Record<string, unknown>;
+    richContent = buildRichContent(parsed, contentData.title);
   } catch {
-    // If parsing fails, use raw content (might be plain HTML)
-    parsedContent = {
-      title: contentData.title,
-      content: contentData.content,
-    };
+    // Raw HTML/markdown — use as-is
+    richContent = contentData.content;
   }
 
   return (
     <div className="h-screen overflow-hidden">
       <ContentReader
         subtopicId={subtopicId}
-        content={parsedContent.content}
+        content={richContent}
         onContinue={handleContinue}
         initialResumePosition={contentData.resumePosition}
       />
